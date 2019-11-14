@@ -9,6 +9,7 @@ Simple splice junction correction
 """
 
 import argparse
+import warnings
 import pysam
 import pandas as pd
 import pyranges as pr
@@ -147,7 +148,9 @@ def correct_splice_junctions(read, dists, window=5):
                                 correction_len -= last_oplen
                                 ins_len += last_oplen
                         else:
-                            raise Exception("Correcting into previous intron")
+                            msg = "Skipping read {0}: correcting into previous intron"
+                            warnings.warn(msg.format(read.qname))
+                            return
 
                     # Extend intron skip
                     oplen += abs(start_dist)
@@ -207,7 +210,12 @@ def correct_splice_junctions(read, dists, window=5):
     for op, oplen in cigarops:
         cigarstring += '{0}{1}'.format(oplen, OP_MAP[op])
 
+    old_cigar, old_qlen = read.cigarstring, read.infer_query_length()
     read.cigarstring = cigarstring
+    if read.infer_query_length() != old_qlen:
+        msg = 'Skipping read {0}: inconsistent query length after CIGAR update'
+        warnings.warn(msg.format(read.qname))
+        read.cigarstring = old_cigar
 
 
 def simpleSJcorr(read, ref_SJs, window=5, as_unit=False):
