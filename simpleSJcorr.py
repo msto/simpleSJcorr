@@ -227,6 +227,10 @@ def simpleSJcorr(read, ref_SJs, window=5, as_unit=False):
     """
 
     read_SJs = get_splice_junctions(read, as_pyrange=True)
+    # skip reads with no introns
+    if len(read_SJs) == 0:
+        return
+
     read_starts = pr.PyRanges(chromosomes=read_SJs.Chromosome, starts=read_SJs.Start, ends=read_SJs.Start + 1)
     read_ends = pr.PyRanges(chromosomes=read_SJs.Chromosome, starts=read_SJs.End, ends=read_SJs.End + 1)
 
