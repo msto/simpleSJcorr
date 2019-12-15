@@ -9,7 +9,7 @@ Simple splice junction correction
 """
 
 import argparse
-import warnings
+import logging
 import pysam
 import pandas as pd
 import pyranges as pr
@@ -62,6 +62,20 @@ def get_splice_junctions(read, as_pyrange=False):
         return tuple(splice_sites)
 
 
+# TODO: refactor below into class or helper functions
+
+class SJAlignment:
+    def __init__(self, read):
+        # SJ coordinates
+        self.sj
+
+        # indexes of SJ/introns in list of cigartuples
+        self.sj_idxs = []
+        for i, (op, oplen) in enumerate(read.cigartuples):
+            if op == 3:
+                self.intron_idxs.append(i)
+                
+
 def correct_splice_junctions(read, dists, window=5):
     """
     Corrects splice junction coordinates by updating CIGAR string
@@ -84,31 +98,28 @@ def correct_splice_junctions(read, dists, window=5):
     # TODO: think about refactoring to not copy/paste the SJ parsing logic
     cigarops = []
     curr_SJ = 0
-    curr_pos = read.pos
 
     # turn the list into an iterator so we can look forward when correcting ends
     cigartuples = iter(read.cigartuples)
 
+    n_intron = 0
     for op, oplen in cigartuples:
-        # Track current position wrt reference by
-        # adding matching bases or deleted bases
-        if op == 0 or op == 2:
-            curr_pos += oplen
-
-        # Assume skipped bases indicate intron
-        elif op == 3:
-            splice_begin = curr_pos + 1  # BAM is 0-start, TxClean bed is 1
-            curr_pos += oplen
-            splice_end = curr_pos
-
+        # If we reach an intron, attempt correction
+        if op == 3:
+            n_intron += 1
             # TODO: unlikely for now, but add logic to catch if total correction
             # length exceeds intron length
+
+            # Get distances from start and end to nearest reference start/end
             start_dist, end_dist = dists[curr_SJ]
+
+            # Correct start
             if 1 <= abs(start_dist) <= window:
                 # Case 1) Ref pos > tx pos
                 # Pad end of last exon with deletion (D) ops, and shorten
                 # intron skip accordingly
                 if start_dist > 0:
+                    logging.debug("Truncating start of intron")
                     # If last op was a del, just add to its length
                     if cigarops[-1][0] == 2:
                         cigarops[-1][1] += start_dist
@@ -124,10 +135,14 @@ def correct_splice_junctions(read, dists, window=5):
                 # Replace last match/delete operations with insertions, and
                 # extend intron skip accordingly
                 else:
+                    logging.debug("Extending start of intron {0}".format(n_intron))
                     # track remaining length to be corrected, and amount of
                     # insertion currently added
                     correction_len = abs(start_dist)
                     ins_len = 0
+
+                    import ipdb
+                    ipdb.set_trace()
                     while correction_len > 0:
                         last_op, last_oplen = cigarops.pop()
                         # if we hit an insertion, just extend it
@@ -149,15 +164,17 @@ def correct_splice_junctions(read, dists, window=5):
                                 ins_len += last_oplen
                         else:
                             msg = "Skipping read {0}: correcting into previous intron"
-                            warnings.warn(msg.format(read.qname))
+                            logging.warning(msg.format(read.qname))
                             return
 
                     # Extend intron skip
                     oplen += abs(start_dist)
+                    
 
             if 1 <= abs(end_dist) <= window:
                 # 1) ref pos > tx pos => extend intron
                 if end_dist > 0:
+                    logging.debug("Extending end of intron")
                     correction_len = end_dist
                     ins_len = 0
 
@@ -180,11 +197,16 @@ def correct_splice_junctions(read, dists, window=5):
                             else:
                                 correction_len -= next_oplen
                                 ins_len += next_oplen
+                        else:
+                            msg = "Skipping read {0}: correcting into next intron"
+                            logging.warning(msg.format(read.qname))
+                            return
 
                     op, oplen = next_op, next_oplen
 
                 # 2) ref pos < tx pos => truncate intron
                 else:
+                    logging.debug("Truncating end of intron")
                     # First, truncate intron skip and add to cigar op list
                     oplen -= abs(end_dist)
                     cigarops.append([op, oplen])
@@ -211,10 +233,14 @@ def correct_splice_junctions(read, dists, window=5):
         cigarstring += '{0}{1}'.format(oplen, OP_MAP[op])
 
     old_cigar, old_qlen = read.cigarstring, read.infer_query_length()
+    old_tuples = read.cigartuples
     read.cigarstring = cigarstring
+
+    import ipdb
+    ipdb.set_trace()
     if read.infer_query_length() != old_qlen:
         msg = 'Skipping read {0}: inconsistent query length after CIGAR update'
-        warnings.warn(msg.format(read.qname))
+        logging.warning(msg.format(read.qname))
         read.cigarstring = old_cigar
 
 
@@ -268,7 +294,15 @@ def main():
                         help='Corrected sequences (BAM format).')
     parser.add_argument('-w', '--window', type=int, default=5,
                         help='Permissible window for correction [5 bp].')
+    parser.add_argument('--log', help="Log file")
     args = parser.parse_args()
+
+    logging.basicConfig(
+        format='%(asctime)s %(levelname)-8s %(message)s',
+        level=logging.DEBUG,
+        datefmt='%Y-%m-%d %H:%M:%S')
+    if args.log is not None:
+        logging.getLogger().addHandler(logging.FileHandler(args.log))
 
     # Open sequence BAM
     bam = pysam.AlignmentFile(args.bam)
