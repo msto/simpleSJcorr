@@ -135,7 +135,7 @@ def correct_splice_junctions(read, dists, window=5):
                             last_oplen += correction_len + ins_len
                             correction_len = 0
                         # otherwise try to trim match/del 
-                        elif last_op in [0, 2]:
+                        elif last_op == 0:
                             # if the correction fits in the last operation,
                             # trim the last op's length and replace with insertion
                             if last_oplen >= correction_len:
@@ -147,6 +147,17 @@ def correct_splice_junctions(read, dists, window=5):
                             else:
                                 correction_len -= last_oplen
                                 ins_len += last_oplen
+                        elif last_op == 2:
+                            # if the correction fits in the last operation,
+                            # trim the last op's length
+                            if last_oplen >= correction_len:
+                                last_oplen -= correction_len
+                                cigarops.append([last_op, last_oplen])
+                                cigarops.append([1, ins_len])
+                                correction_len = 0
+                            # otherwise drop the op and move to the next
+                            else:
+                                correction_len -= last_oplen
                         else:
                             msg = "Skipping read {0}: correcting into previous intron"
                             logging.warning(msg.format(read.qname))
@@ -166,6 +177,9 @@ def correct_splice_junctions(read, dists, window=5):
                     # extend the intron skip first
                     cigarops.append([op, oplen + end_dist])
 
+                    import ipdb
+                    ipdb.set_trace()
+
                     # then truncate the next operations
                     while correction_len > 0:
                         next_op, next_oplen = next(cigartuples)
@@ -173,7 +187,7 @@ def correct_splice_junctions(read, dists, window=5):
                             next_oplen += correction_len + ins_len
                             correction_len = 0
                             
-                        elif next_op in [0, 2]:
+                        elif next_op == 0:
                             if next_oplen >= correction_len:
                                 next_oplen -= correction_len
                                 cigarops.append([1, correction_len + ins_len])
@@ -182,6 +196,14 @@ def correct_splice_junctions(read, dists, window=5):
                             else:
                                 correction_len -= next_oplen
                                 ins_len += next_oplen
+                        elif next_op == 2:
+                            if next_oplen >= correction_len:
+                                next_oplen -= correction_len
+                                cigarops.append([1, ins_len])
+                                correction_len = 0
+                            # otherwise drop the op and move to the next
+                            else:
+                                correction_len -= next_oplen
                         else:
                             msg = "Skipping read {0}: correcting into next intron"
                             logging.warning(msg.format(read.qname))
