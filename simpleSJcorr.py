@@ -141,8 +141,6 @@ def correct_splice_junctions(read, dists, window=5):
                     correction_len = abs(start_dist)
                     ins_len = 0
 
-                    import ipdb
-                    ipdb.set_trace()
                     while correction_len > 0:
                         last_op, last_oplen = cigarops.pop()
                         # if we hit an insertion, just extend it
@@ -236,8 +234,6 @@ def correct_splice_junctions(read, dists, window=5):
     old_tuples = read.cigartuples
     read.cigarstring = cigarstring
 
-    import ipdb
-    ipdb.set_trace()
     if read.infer_query_length() != old_qlen:
         msg = 'Skipping read {0}: inconsistent query length after CIGAR update'
         logging.warning(msg.format(read.qname))
