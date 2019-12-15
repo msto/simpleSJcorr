@@ -63,19 +63,6 @@ def get_splice_junctions(read, as_pyrange=False):
 
 
 # TODO: refactor below into class or helper functions
-
-class SJAlignment:
-    def __init__(self, read):
-        # SJ coordinates
-        self.sj
-
-        # indexes of SJ/introns in list of cigartuples
-        self.sj_idxs = []
-        for i, (op, oplen) in enumerate(read.cigartuples):
-            if op == 3:
-                self.intron_idxs.append(i)
-                
-
 def correct_splice_junctions(read, dists, window=5):
     """
     Corrects splice junction coordinates by updating CIGAR string
