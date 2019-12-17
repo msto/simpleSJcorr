@@ -94,6 +94,10 @@ def correct_splice_junctions(read, dists, window=5):
         # If we reach an intron, attempt correction
         if op == 3:
             n_intron += 1
+
+            if n_intron >= 7:
+                continue
+
             # TODO: unlikely for now, but add logic to catch if total correction
             # length exceeds intron length
 
@@ -106,7 +110,7 @@ def correct_splice_junctions(read, dists, window=5):
                 # Pad end of last exon with deletion (D) ops, and shorten
                 # intron skip accordingly
                 if start_dist > 0:
-                    logging.debug("Truncating start of intron")
+                    logging.debug("Truncating start of intron {0} by {1} bp".format(n_intron, abs(start_dist)))
                     # If last op was a del, just add to its length
                     if cigarops[-1][0] == 2:
                         cigarops[-1][1] += start_dist
@@ -122,7 +126,7 @@ def correct_splice_junctions(read, dists, window=5):
                 # Replace last match/delete operations with insertions, and
                 # extend intron skip accordingly
                 else:
-                    logging.debug("Extending start of intron {0}".format(n_intron))
+                    logging.debug("Extending start of intron {0} by {1} bp".format(n_intron, abs(start_dist)))
                     # track remaining length to be corrected, and amount of
                     # insertion currently added
                     correction_len = abs(start_dist)
@@ -132,7 +136,7 @@ def correct_splice_junctions(read, dists, window=5):
                         last_op, last_oplen = cigarops.pop()
                         # if we hit an insertion, just extend it
                         if last_op == 1:
-                            last_oplen += correction_len + ins_len
+                            last_oplen += ins_len
                             correction_len = 0
                         # otherwise try to trim match/del 
                         elif last_op == 0:
@@ -170,21 +174,18 @@ def correct_splice_junctions(read, dists, window=5):
             if 1 <= abs(end_dist) <= window:
                 # 1) ref pos > tx pos => extend intron
                 if end_dist > 0:
-                    logging.debug("Extending end of intron")
+                    logging.debug("Extending end of intron {0} by {1} bp".format(n_intron, abs(end_dist)))
                     correction_len = end_dist
                     ins_len = 0
 
                     # extend the intron skip first
                     cigarops.append([op, oplen + end_dist])
 
-                    import ipdb
-                    ipdb.set_trace()
-
                     # then truncate the next operations
                     while correction_len > 0:
                         next_op, next_oplen = next(cigartuples)
                         if next_op == 1:
-                            next_oplen += correction_len + ins_len
+                            next_oplen += ins_len
                             correction_len = 0
                             
                         elif next_op == 0:
