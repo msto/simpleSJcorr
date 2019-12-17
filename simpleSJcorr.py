@@ -110,7 +110,7 @@ def correct_splice_junctions(read, dists, window=5):
                 # Pad end of last exon with deletion (D) ops, and shorten
                 # intron skip accordingly
                 if start_dist > 0:
-                    logging.debug("Truncating start of intron {0} by {1} bp".format(n_intron, abs(start_dist)))
+                    logging.info("Truncating start of intron {0} by {1} bp".format(n_intron, abs(start_dist)))
                     # If last op was a del, just add to its length
                     if cigarops[-1][0] == 2:
                         cigarops[-1][1] += start_dist
@@ -126,7 +126,7 @@ def correct_splice_junctions(read, dists, window=5):
                 # Replace last match/delete operations with insertions, and
                 # extend intron skip accordingly
                 else:
-                    logging.debug("Extending start of intron {0} by {1} bp".format(n_intron, abs(start_dist)))
+                    logging.info("Extending start of intron {0} by {1} bp".format(n_intron, abs(start_dist)))
                     # track remaining length to be corrected, and amount of
                     # insertion currently added
                     correction_len = abs(start_dist)
@@ -174,7 +174,7 @@ def correct_splice_junctions(read, dists, window=5):
             if 1 <= abs(end_dist) <= window:
                 # 1) ref pos > tx pos => extend intron
                 if end_dist > 0:
-                    logging.debug("Extending end of intron {0} by {1} bp".format(n_intron, abs(end_dist)))
+                    logging.info("Extending end of intron {0} by {1} bp".format(n_intron, abs(end_dist)))
                     correction_len = end_dist
                     ins_len = 0
 
@@ -214,7 +214,7 @@ def correct_splice_junctions(read, dists, window=5):
 
                 # 2) ref pos < tx pos => truncate intron
                 else:
-                    logging.debug("Truncating end of intron")
+                    logging.info("Truncating end of intron")
                     # First, truncate intron skip and add to cigar op list
                     oplen -= abs(end_dist)
                     cigarops.append([op, oplen])
@@ -239,23 +239,100 @@ def correct_splice_junctions(read, dists, window=5):
 
 
 def update_cigarops(read, cigarops):
-    OP_MAP = {0: 'M', 1: 'I', 2: 'D', 3: 'N', 4: 'S', 5: 'H'}
+    """
+    Updates a read's cigar string with a specified list of cigar operations
+
+    It's easier to work with the list of cigar tuples but pysam doesn't permit
+    updating the read.cigartuples attribute directly - it's parsed from the 
+    cigar string each time. So, we build our list of desired operations, then
+    create the corresponding CIGAR string and update the read.
+
+    Updates the read in place.
+    
+    Arguments
+    ---------
+    read : pysam.AlignedSegment
+        Read to correct
+    cigarops : list of tuples of int
+        List of cigartuples, i.e. [(op, oplen)]
+    """
+
+    # Construct the CIGAR string corresponding to our list of operations
+    OP_MAP = {0: 'M', 1: 'I', 2: 'D', 3: 'N', 4: 'S', 5: 'H',
+              6: 'P', 7: '=', 8: 'X'}
     cigarstring = ''
     for op, oplen in cigarops:
         cigarstring += '{0}{1}'.format(oplen, OP_MAP[op])
 
+    # Cache the old cigar string and query length before updating
     old_cigar, old_qlen = read.cigarstring, read.infer_query_length()
     old_tuples = read.cigartuples
     read.cigarstring = cigarstring
 
+    # And reset back to old alignment if it doesn't match
     if read.infer_query_length() != old_qlen:
         msg = 'Skipping read {0}: inconsistent query length after CIGAR update'
         logging.warning(msg.format(read.qname))
         read.cigarstring = old_cigar
 
 
+def merge_nearby_introns(read, window=5):
+    """
+    Merge introns that have insufficient aligned sequence between them.
 
-def simpleSJcorr(read, ref_SJs, window=5, as_unit=False):
+    Updates the read in place.
+    
+    Arguments
+    ---------
+    read : pysam.AlignedSegment
+        Read to correct
+    window : int, optional
+        SJ correction window; introns merged if they are within 2*window
+    """
+
+    cigarops = []
+    prev_intron = None
+    curr_ops = []
+
+    for op, oplen in read.cigartuples:
+        if op == 3:
+            if prev_intron is None:
+                # Mark first intron and add all preceding ops to our list
+                prev_intron = (op, oplen)
+                cigarops += curr_ops
+                curr_ops = []
+            else:
+                # Count query-consuming operations
+                dist = sum([x[1] for x in curr_ops if x[0] in [0, 1]])
+                if dist <= 2 * window:
+                    logging.info("MERGING")
+
+                    # Merge previous and current intron
+                    prev_intron = (3, prev_intron[1] + oplen)
+
+                    # Replace intermediate operations with an insertion
+                    # TODO: figure out correct operation to include here
+                    curr_ops = [(1, dist)]
+                else:
+                    # Add last intron to our list of tracked operations
+                    cigarops.append(prev_intron)
+                    # Then add the operations between it and the current intron
+                    cigarops += curr_ops
+
+                    # Reset our trackers
+                    curr_ops = []
+                    prev_intron = (op, oplen)
+        else:
+            # Track all operations between introns
+            curr_ops.append((op, oplen))
+
+    cigarops.append(prev_intron)
+    cigarops += curr_ops
+
+    update_cigarops(read, cigarops)
+
+
+def simpleSJcorr(read, ref_SJs, window=5, merge=False, as_unit=False):
     """
     Correct splice junctions in a read relative to a reference set of junctions
 
@@ -267,9 +344,14 @@ def simpleSJcorr(read, ref_SJs, window=5, as_unit=False):
         Table of reference splice junctions (Chromosome, Start, End)
     window : int
         Maximum distance for correction
+    merge : bool
+        Merge splice junctions within 2*window
     as_unit : bool
         Don't correct start and end independently (not yet implemented)
     """
+
+    if merge:
+        merge_nearby_introns(read, window)
 
     read_SJs = get_splice_junctions(read, as_pyrange=True)
     # skip reads with no introns
@@ -289,7 +371,6 @@ def simpleSJcorr(read, ref_SJs, window=5, as_unit=False):
 
     dists = list(zip(start_dist, end_dist))
 
-    #  merge_nearby_introns(read, window)
     correct_splice_junctions(read, dists, window)
 
 
@@ -306,12 +387,14 @@ def main():
                         help='Corrected sequences (BAM format).')
     parser.add_argument('-w', '--window', type=int, default=5,
                         help='Permissible window for correction [5 bp].')
+    parser.add_argument('-m', '--merge', action='store_true', default=False,
+                        help='Merge introns that are closer than 2*window.')
     parser.add_argument('--log', help="Log file")
     args = parser.parse_args()
 
     logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.DEBUG,
+        level=logging.WARNING,
         datefmt='%Y-%m-%d %H:%M:%S')
     if args.log is not None:
         logging.getLogger().addHandler(logging.FileHandler(args.log))
@@ -327,7 +410,7 @@ def main():
     ref_SJs = pr.PyRanges(df)
 
     for read in bam:
-        simpleSJcorr(read, ref_SJs)
+        simpleSJcorr(read, ref_SJs, window=args.window, merge=args.merge)
         fout.write(read)
 
 
