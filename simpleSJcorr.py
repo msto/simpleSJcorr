@@ -235,6 +235,10 @@ def correct_splice_junctions(read, dists, window=5):
         # note: adding as list, not tuple, so we can update dels in place above
         cigarops.append([op, oplen])
 
+    update_cigarops(read, cigarops)
+
+
+def update_cigarops(read, cigarops):
     OP_MAP = {0: 'M', 1: 'I', 2: 'D', 3: 'N', 4: 'S', 5: 'H'}
     cigarstring = ''
     for op, oplen in cigarops:
@@ -248,6 +252,7 @@ def correct_splice_junctions(read, dists, window=5):
         msg = 'Skipping read {0}: inconsistent query length after CIGAR update'
         logging.warning(msg.format(read.qname))
         read.cigarstring = old_cigar
+
 
 
 def simpleSJcorr(read, ref_SJs, window=5, as_unit=False):
@@ -284,6 +289,7 @@ def simpleSJcorr(read, ref_SJs, window=5, as_unit=False):
 
     dists = list(zip(start_dist, end_dist))
 
+    #  merge_nearby_introns(read, window)
     correct_splice_junctions(read, dists, window)
 
 
