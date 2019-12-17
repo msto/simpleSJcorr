@@ -214,7 +214,7 @@ def correct_splice_junctions(read, dists, window=5):
 
                 # 2) ref pos < tx pos => truncate intron
                 else:
-                    logging.info("Truncating end of intron")
+                    logging.info("Truncating end of intron {0} by {1} bp".format(n_intron, abs(end_dist)))
                     # First, truncate intron skip and add to cigar op list
                     oplen -= abs(end_dist)
                     cigarops.append([op, oplen])
@@ -294,8 +294,10 @@ def merge_nearby_introns(read, window=5):
     prev_intron = None
     curr_ops = []
 
+    n_intron = 0
     for op, oplen in read.cigartuples:
         if op == 3:
+            n_intron += 1
             if prev_intron is None:
                 # Mark first intron and add all preceding ops to our list
                 prev_intron = (op, oplen)
@@ -303,16 +305,18 @@ def merge_nearby_introns(read, window=5):
                 curr_ops = []
             else:
                 # Count query-consuming operations
-                dist = sum([x[1] for x in curr_ops if x[0] in [0, 1]])
-                if dist <= 2 * window:
-                    logging.info("MERGING")
+                query_dist = sum([x[1] for x in curr_ops if x[0] in [0, 1]])
+                ref_dist = sum([x[1] for x in curr_ops if x[0] in [0, 2]])
+
+                if query_dist <= 2 * window:
+                    logging.info("Merging introns {0} and {1}".format(n_intron - 1, n_intron))
 
                     # Merge previous and current intron
-                    prev_intron = (3, prev_intron[1] + oplen)
+                    # Add Ns to maintain ref length 
+                    prev_intron = (3, prev_intron[1] + oplen + ref_dist)
 
                     # Replace intermediate operations with an insertion
-                    # TODO: figure out correct operation to include here
-                    curr_ops = [(1, dist)]
+                    curr_ops = [(1, query_dist)]
                 else:
                     # Add last intron to our list of tracked operations
                     cigarops.append(prev_intron)
@@ -394,7 +398,7 @@ def main():
 
     logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.WARNING,
+        level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S')
     if args.log is not None:
         logging.getLogger().addHandler(logging.FileHandler(args.log))
